@@ -1,13 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
-// Custom APIs for renderer
 const api = {
-  // Cria um "ouvinte" para as placas que chegam do main
   onNovaPlaca: (callback) => ipcRenderer.on('nova-leitura-placa', (_event, value) => callback(value)),
   onAtualizarCameras: (callback) => ipcRenderer.on('atualizar-lista-cameras', () => callback()),
   getServerInfo: () => ipcRenderer.invoke('get-server-info'),
-  // ======== FALTARAM ESSAS AQUI: AS PONTES DO BANCO DE DADOS ========
   getCameras: () => ipcRenderer.invoke('get-cameras'),
   salvarCamera: (cam) => ipcRenderer.invoke('salvar-camera', cam),
   deletarCamera: (mac) => ipcRenderer.invoke('deletar-camera', mac),

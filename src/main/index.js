@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, Tray, Menu } from 'electron' // Ajustado: Menu adicionado
 import { networkInterfaces } from 'os'
 import path, { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -22,8 +22,11 @@ expressApp.get('/', (_, res) => res.send('Serviço Monitorando no Electron'));
 const PORT = 8083;
 
 // ==========================================
-// VARIÁVEL DO BANCO DE DADOS (Iniciada depois)
+// VARIÁVEIS GLOBAIS (Janela, Gaveta e BD)
 // ==========================================
+let tray = null;
+let mainWindow = null;
+let sistemaEncerrando = false;
 let db;
 
 // ==========================================
@@ -74,19 +77,18 @@ ipcMain.handle('get-cameras', () => {
 
 ipcMain.handle('salvar-camera', (event, cam) => {
   return new Promise((resolve) => {
-    // TRATAMENTO: Se vier vazio, transforma em NULL de verdade pro banco não dar erro de UNIQUE
     const macTratado = cam.mac && cam.mac.trim() !== '' ? cam.mac.toLowerCase().trim() : null;
 
-    if (cam.id) { // Edição
+    if (cam.id) {
       db.run('UPDATE equipamento SET nome = ?, mac = ?, ip = ? WHERE id = ?',
         [cam.nome, macTratado, cam.ip, cam.id], function (err) {
-          if (err) resolve({ erro: err.message }); // Devolve o erro para o React
+          if (err) resolve({ erro: err.message });
           else resolve({ sucesso: true });
         });
-    } else { // Novo
+    } else {
       db.run('INSERT INTO equipamento (nome, mac, ip) VALUES (?, ?, ?)',
         [cam.nome, macTratado, cam.ip], function (err) {
-          if (err) resolve({ erro: err.message }); // Devolve o erro para o React
+          if (err) resolve({ erro: err.message });
           else resolve({ sucesso: true });
         });
     }
@@ -112,10 +114,7 @@ ipcMain.handle('get-logs', (event, macFiltro) => {
 });
 
 // ==========================================
-// MIDDLEWARE logCamera COM BANCO DE DADOS
-// ==========================================
-// ==========================================
-// MIDDLEWARE logCamera COM AUTO-ATUALIZAÇÃO DE MAC
+// MIDDLEWARE logCamera COM VALIDAÇÃO DE PLACA
 // ==========================================
 async function logCamera(req, res, next) {
   let ipCamera = req.ip || req.socket.remoteAddress;
@@ -126,12 +125,19 @@ async function logCamera(req, res, next) {
 
     if (!objeto.plateNumber || !objeto.mac) return res.sendStatus(200);
 
+    const placaLimpa = objeto.plateNumber.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const placaValida = /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(placaLimpa);
+
+    if (!placaValida) {
+      console.log(`[Filtro] Leitura ignorada (Placa Inválida): ${objeto.plateNumber}`);
+      return res.sendStatus(200);
+    }
+
     const macRecebido = objeto.mac.toLowerCase();
 
-    // Função interna para salvar o log e enviar pro React (evita repetir código)
     const gravarLogEEnviar = (cameraData) => {
       db.run('INSERT INTO logs_equipamento (equipamento_mac, placa, ip_origem) VALUES (?, ?, ?)',
-        [cameraData.mac, objeto.plateNumber, ipCamera], function (err) {
+        [cameraData.mac, placaLimpa, ipCamera], function (err) {
 
           const windows = BrowserWindow.getAllWindows();
           if (windows.length > 0) {
@@ -139,7 +145,7 @@ async function logCamera(req, res, next) {
               id: this.lastID,
               nome: cameraData.nome,
               mac: cameraData.mac,
-              placa: objeto.plateNumber,
+              placa: placaLimpa,
               ip: ipCamera,
               data: new Date().toLocaleDateString('pt-BR'),
               hora: new Date().toLocaleTimeString('pt-BR')
@@ -149,35 +155,30 @@ async function logCamera(req, res, next) {
         });
     };
 
-    // 1. Tenta achar a câmera pelo MAC recebido
     db.get('SELECT * FROM equipamento WHERE mac = ?', [macRecebido], (err, cameraByMac) => {
       if (cameraByMac) {
-        // Achou de primeira pelo MAC! Tudo certo, só gravar o log.
         return gravarLogEEnviar(cameraByMac);
       }
 
-      // 2. Não achou pelo MAC? Então procura se tem alguma câmera salva com esse IP
       db.get('SELECT * FROM equipamento WHERE ip = ?', [ipCamera], (err, cameraByIp) => {
         if (cameraByIp) {
-          // Achou pelo IP! Vamos atualizar o MAC dela no banco de dados agora mesmo
           console.log(`[Auto-Update] Atualizando MAC da câmera '${cameraByIp.nome}' (IP: ${ipCamera}) para: ${macRecebido}`);
 
           db.run('UPDATE equipamento SET mac = ? WHERE id = ?', [macRecebido, cameraByIp.id], (updateErr) => {
             if (updateErr) {
               console.log("Erro ao atualizar MAC automaticamente:", updateErr.message);
-              return res.sendStatus(200); // Libera a câmera mesmo com erro no update
+              return res.sendStatus(200);
             }
-            // ======== NOVO: AVISA O REACT PARA RECARREGAR A LISTA ========
+
             const windows = BrowserWindow.getAllWindows();
             if (windows.length > 0) {
               windows[0].webContents.send('atualizar-lista-cameras');
             }
-            // MAC atualizado com sucesso! Agora grava o log da placa
-            cameraByIp.mac = macRecebido; // Atualiza o objeto em memória
+
+            cameraByIp.mac = macRecebido;
             return gravarLogEEnviar(cameraByIp);
           });
         } else {
-          // 3. Não achou nem por MAC e nem por IP. É uma câmera totalmente desconhecida.
           console.log(`Câmera MAC ${macRecebido} (IP: ${ipCamera}) ignorada. Não cadastrada.`);
           return res.sendStatus(200);
         }
@@ -193,10 +194,10 @@ async function logCamera(req, res, next) {
 // CONFIGURAÇÃO DO ELECTRON E STARTUP
 // ==========================================
 function createWindow() {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 630,
     height: 500,
-    show: false,
+    show: false, // Inicia invisível para ficar só na gaveta
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
@@ -205,9 +206,21 @@ function createWindow() {
     }
   })
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
-  })
+  // INTERCEPTA O BOTÃO "X":
+  mainWindow.on('close', (event) => {
+    if (!sistemaEncerrando) {
+      event.preventDefault(); // Impede o fechamento real
+      mainWindow.hide();      // Apenas esconde a janela
+
+      if (tray) {
+        tray.displayBalloon({
+          title: 'PDV Rodando em 2º Plano',
+          content: 'O sistema de câmeras continua registrando as placas.',
+          iconType: 'info'
+        });
+      }
+    }
+  });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
@@ -231,7 +244,36 @@ app.whenReady().then(() => {
   ipcMain.on('ping', () => console.log('pong'))
 
   // ==========================================
-  // 1. INICIALIZA O BANCO DE DADOS AQUI (Seguro)
+  // CONFIGURA A GAVETA (TRAY) E AUTO-START
+  // ==========================================
+  app.setLoginItemSettings({
+    openAtLogin: true,
+    path: app.getPath('exe')
+  });
+
+  tray = new Tray(icon);
+  tray.setToolTip('PDV LPR - Monitor de Câmeras');
+
+  const contextMenu = Menu.buildFromTemplate([
+    { label: 'Abrir Painel', click: () => { if (mainWindow) mainWindow.show(); } },
+    { type: 'separator' },
+    {
+      label: 'Encerrar Sistema',
+      click: () => {
+        sistemaEncerrando = true;
+        app.quit();
+      }
+    }
+  ]);
+
+  tray.setContextMenu(contextMenu);
+
+  tray.on('double-click', () => {
+    if (mainWindow) mainWindow.show();
+  });
+
+  // ==========================================
+  // INICIALIZA O BANCO DE DADOS AQUI (Seguro)
   // ==========================================
   const dbPath = path.join(app.getPath('userData'), 'pdv_database.sqlite');
   db = new sqlite3.Database(dbPath);
@@ -259,9 +301,9 @@ app.whenReady().then(() => {
   });
 
   // ==========================================
-  // 2. INICIA A TELA E O SERVIDOR EXPRESS
+  // INICIA A TELA E O SERVIDOR EXPRESS
   // ==========================================
-  createWindow()
+  createWindow();
 
   expressApp.listen(PORT, '0.0.0.0', () => {
     console.log(`Servidor Express escutando na rede local na porta ${PORT}...`);
