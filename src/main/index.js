@@ -275,8 +275,22 @@ app.whenReady().then(() => {
   // ==========================================
   // INICIALIZA O BANCO DE DADOS AQUI (Seguro)
   // ==========================================
-  const dbPath = path.join(app.getPath('userData'), 'pdv_database.sqlite');
+  // ==========================================
+  // 1. INICIALIZA O BANCO DE DADOS JUNTO AO .EXE
+  // ==========================================
+  let pastaDoExecutavel;
+
+  if (app.isPackaged) {
+    // Se for o sistema compilado (.exe), pega a pasta onde ele foi instalado/colocado
+    pastaDoExecutavel = path.dirname(app.getPath('exe'));
+  } else {
+    // Se for modo de desenvolvimento (npm run dev), pega a raiz do projeto
+    pastaDoExecutavel = app.getAppPath();
+  }
+
+  const dbPath = path.join(pastaDoExecutavel, 'banco_lpr.sqlite');
   db = new sqlite3.Database(dbPath);
+  // ==========================================
 
   db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS equipamento (
