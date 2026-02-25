@@ -6,9 +6,6 @@ import icon from '../../resources/icon.png?asset'
 import express from 'express'
 import sqlite3 from 'sqlite3'
 
-// ==========================================
-// CONFIGURAÇÃO DO SERVIDOR EXPRESS
-// ==========================================
 const expressApp = express();
 
 expressApp.use(express.text({ type: '*/*', limit: '20mb' }));
@@ -190,14 +187,12 @@ async function logCamera(req, res, next) {
   }
 }
 
-// ==========================================
-// CONFIGURAÇÃO DO ELECTRON E STARTUP
-// ==========================================
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 630,
     height: 500,
-    show: false, // Inicia invisível para ficar só na gaveta
+    show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
@@ -243,16 +238,19 @@ app.whenReady().then(() => {
 
   ipcMain.on('ping', () => console.log('pong'))
 
-  // ==========================================
-  // CONFIGURA A GAVETA (TRAY) E AUTO-START
-  // ==========================================
-  app.setLoginItemSettings({
-    openAtLogin: true,
-    path: app.getPath('exe')
-  });
+  if (app.isPackaged) {
+    app.setLoginItemSettings({
+      openAtLogin: true, // Diz pro Windows: "Liga isso quando o usuário entrar"
+      path: app.getPath('exe'), // Pega o caminho exato de onde o .exe está salvo
+      args: [
+        '--processStart', `"${app.getName()}.exe"`,
+        '--process-start-args', `"--hidden"`
+      ]
+    });
+  }
 
   tray = new Tray(icon);
-  tray.setToolTip('PDV LPR - Monitor de Câmeras');
+  tray.setToolTip('LPR - Monitor de Câmeras');
 
   const contextMenu = Menu.buildFromTemplate([
     { label: 'Abrir Painel', click: () => { if (mainWindow) mainWindow.show(); } },
@@ -272,10 +270,6 @@ app.whenReady().then(() => {
     if (mainWindow) mainWindow.show();
   });
 
-  // ==========================================
-  // INICIALIZA O BANCO DE DADOS AQUI (Seguro)
-  // ==========================================
-  // ==========================================
   // 1. INICIALIZA O BANCO DE DADOS JUNTO AO .EXE
   // ==========================================
   let pastaDoExecutavel;

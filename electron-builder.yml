@@ -1,5 +1,5 @@
 appId: com.electron.app
-productName: monitor-camera-desk
+productName: Câmera IPC TGW-LRA3
 directories:
   buildResources: build
 files:
@@ -11,7 +11,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: monitor-camera-desk
+  executableName: Câmera IPC TGW-LRA3
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
